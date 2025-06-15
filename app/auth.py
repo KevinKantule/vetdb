@@ -1,5 +1,3 @@
-#Generador de password con Hash: print(hashlib.sha256("Demo2025!".encode()).hexdigest())
-
 # app/auth.py
 """
 Módulo de autenticación: login y control de sesión.
