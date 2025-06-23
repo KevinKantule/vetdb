@@ -1,31 +1,24 @@
 # app/main.py
 import streamlit as st
 import pandas as pd
+import io
+
 from auth import login_page
-from crud.duenos import list_duenos, create_dueno, update_dueno, delete_dueno
 from common import run_query
-from crud.mascotas import (
-    list_mascotas,
-    create_mascota,
-    update_mascota,
-    delete_mascota
-)
-from crud.citas import list_citas, create_cita, update_cita, delete_cita
+from datetime import datetime, date
 
+from crud.duenos import list_duenos,   create_dueno,   update_dueno,   delete_dueno
+from crud.mascotas import list_mascotas, create_mascota, update_mascota, delete_mascota
+from crud.citas import list_citas,    create_cita,    update_cita,    delete_cita
+from crud.reportes import reporte_vacunas_pendientes, reporte_atendidos_hoy, reporte_ingresos_servicio_mes
+from crud.analisis import reporte_mascotas_hoy, reporte_ingresos_mes
 
-# Intentamos el login; detiene la app si no autenticado
-login_page()
-
-# Título principal
-st.title("Sistema de Gestión Veterinaria")
 
 # Menú principal
-
-
 def main_menu():
     # Mapeamos siempre en minúsculas
     opciones_por_rol = {
-        'admin':       ['Dueños', 'Mascotas', 'Citas', 'Reportes'],
+        'admin':       ['Dueños', 'Mascotas', 'Citas', 'Facturación', 'Reportes'],
         'recepcion':   ['Dueños', 'Mascotas', 'Citas'],
         'veterinario': ['Mascotas', 'Citas']
     }
@@ -35,21 +28,43 @@ def main_menu():
 
 
 def app():
+
+    # — LOGOUT —
+    # Si ya estabas autenticado, muestra el botón “Cerrar sesión”
+    if st.session_state.get("authenticated"):
+        if st.sidebar.button("🔒 Cerrar sesión"):
+            # limpia toda la info de tu sesión
+            for k in ("authenticated","user","user_id","rol_id","rol_nombre"):
+                st.session_state.pop(k, None)
+            # detenemos la ejecución actual; al volverse a ejecutar,
+            # como ya no hay 'authenticated', caerá en la pantalla de login
+            st.stop()
+
+    # — LOGIN —
+    # Si no estás autenticado, lanzamos la página de login y detenemos
+    if not st.session_state.get("authenticated"):
+        login_page()  # dentro de login_page usas st.stop() si no se autentica
+        st.stop()
+
+    # — TODA LA APP “LOGUEADA” VA A PARTIR DE AQUÍ —
+    st.title(f"Sistema de Gestión Veterinaria — Usuario: {st.session_state['user']}")
     opcion = main_menu()
 
+    # === DUEÑOS ===
     if opcion == 'Dueños':
         st.header("🔎 Gestión de Dueños")
 
         # 1) Filtros + paginación en el body
         filtro = st.text_input("🔎 Buscar por nombre", key="filter_duenos")
         limit = st.number_input("Filas a mostrar", min_value=1,
-                            max_value=100, value=5, step=1, key="limit_duenos")
+                                max_value=100, value=5, step=1, key="limit_duenos")
         offset = st.number_input("Offset", min_value=0,
-                             step=1, value=0, key="offset_duenos")
+                                 step=1, value=0, key="offset_duenos")
 
         # 2) Listado
         try:
-            df = list_duenos(limit=int(limit), offset=int(offset), filtro=filtro)
+            df = list_duenos(limit=int(limit),
+                             offset=int(offset), filtro=filtro)
             st.dataframe(df)
         except Exception as e:
             st.error("Error al cargar la lista de dueños. Revisa los logs.")
@@ -71,20 +86,23 @@ def app():
                     st.error("Ya existe un dueño con ese Documento ID")
                 else:
                     try:
-                        create_dueno(nombre, telefono, correo, direccion, documento)
+                        create_dueno(nombre, telefono, correo,
+                                     direccion, documento)
                         st.success("Dueño creado exitosamente")
                     except ValueError as ve:
                         st.error(f"Error de validación: {ve}")
                     except Exception as e:
-                        st.error("Error inesperado al crear dueño. Revisa los logs.")
+                        st.error(
+                            "Error inesperado al crear dueño. Revisa los logs.")
                         st.write(e)
                 # refresca la tabla
-                #df = list_duenos(limit=int(limit), offset=int(offset), filtro=filtro)
-                #st.dataframe(df)
+                # df = list_duenos(limit=int(limit), offset=int(offset), filtro=filtro)
+                # st.dataframe(df)
 
         # 4) Editar / Eliminar
         if not df.empty:
-            selected = st.selectbox("Selecciona dueño por ID", df["DUENO_ID"].tolist(), key="sel_dueno")
+            selected = st.selectbox(
+                "Selecciona dueño por ID", df["DUENO_ID"].tolist(), key="sel_dueno")
         if selected:
             row = df[df["DUENO_ID"] == selected].iloc[0]
             c1, c2 = st.columns(2)
@@ -111,8 +129,8 @@ def app():
                         st.error(
                             "Error inesperado al actualizar dueño. Revisa los logs.")
                         st.write(e)
-                    #df = list_duenos(limit=int(limit), offset=int(offset), filtro=filtro)
-                    #st.dataframe(df)
+                    # df = list_duenos(limit=int(limit), offset=int(offset), filtro=filtro)
+                    # st.dataframe(df)
 
             with c2:
                 if st.button("Eliminar", key="btn_delete_dueno"):
@@ -122,11 +140,12 @@ def app():
                     except Exception as e:
                         st.error("Error al eliminar dueño. Revisa los logs.")
                         st.write(e)
-                    #df = list_duenos(limit=int(limit), offset=int(offset), filtro=filtro)
-                    #st.dataframe(df)
+                    # df = list_duenos(limit=int(limit), offset=int(offset), filtro=filtro)
+                    # st.dataframe(df)
 
+    # === MASCOTAS ===
     elif opcion == 'Mascotas':
-        st.header("Gestión de Mascotas")
+        st.header("🐶 Gestión de Mascotas")
 
         # 👉 Filtros y paginación específicos de Mascotas
         filtro_m = st.text_input(
@@ -135,15 +154,23 @@ def app():
             "Filas a mostrar", min_value=1, max_value=100, value=5, key="limit_mascotas")
         offset_m = st.number_input(
             "Offset", min_value=0, step=1, value=0, key="offset_mascotas")
+        
+        # Pon esto justo antes del bloque de listado de Mascotas (por ejemplo, antes del try:)
+        #st.write("🏷 Contexto actual:", run_query("SELECT CURRENT_DATABASE(), CURRENT_SCHEMA()", None))
+        #st.write("🐾 Total mascotas en tabla base:",
+         #        run_query("SELECT COUNT(*) AS total FROM vet_mascota", None))
+        #st.write("🐾 Total mascotas en la vista activa:",
+                 #run_query("SELECT COUNT(*) AS total FROM vw_mascota_activa", None))
 
         # 1) Listado de mascotas
         try:
-            dfm = list_mascotas(limit=int(limit_m), offset=int(offset_m), filtro=filtro_m)
+            dfm = list_mascotas(limit=int(limit_m),
+                                offset=int(offset_m), filtro=filtro_m)
             # muestra la columna dueno_nombre en lugar de DUENO_ID
             # tras obtener dfm de list_mascotas…
             # 1) renombra DUENO_NOMBRE → Dueño
             dfm_viz = dfm.rename(columns={"DUENO_NOMBRE": "Dueño"})
-            
+
             # 2) elige el orden y las columnas que aparecen (omite DUENO_ID)
             cols = [
                 "MASCOTA_ID",
@@ -157,7 +184,7 @@ def app():
                 "MICROCHIP"
             ]
             dfm_viz = dfm_viz[cols]
-            
+
             # 3) muéstralo
             st.dataframe(dfm_viz)
 
@@ -319,8 +346,9 @@ def app():
                             # offset_m), filtro=filtro_m)
                         # st.dataframe(dfm)
 
+    # === CITAS ===
     elif opcion == 'Citas':
-        st.header("Gestión de Citas")
+        st.header("📅 Gestión de Citas")
 
         # 🔎 Filtro y paginación en el cuerpo
         filtro_c = st.text_input(
@@ -334,7 +362,32 @@ def app():
         try:
             dfc = list_citas(limit=int(limit_c), offset=int(
                 offset_c), filtro=filtro_c)
-            st.dataframe(dfc)
+
+            # 1) DataFrame crudo (contiene todos los IDs para la edición)
+            dfc = list_citas(limit=int(limit_c), offset=int(
+                offset_c), filtro=filtro_c)
+
+            # 2) DataFrame de vista: renombramos y ocultamos los IDs
+            dfc_viz = (
+                dfc
+                .rename(columns={
+                    "MASCOTA_NOMBRE":     "Mascota",
+                    "VETERINARIO_NOMBRE": "Veterinario",
+                    "FECHA_HORA":         "Fecha & Hora"
+                })
+                .loc[:, [
+                    "CITA_ID",
+                    "Mascota",
+                    "Veterinario",
+                    "Fecha & Hora",
+                    "SERVICIO",
+                    "MOTIVO"
+                ]]
+            )
+
+            # 3) Mostramos solo la vista limpia
+            st.dataframe(dfc_viz)
+
         except Exception as e:
             st.error("Error al cargar la lista de citas. Revisa los logs.")
             st.write(e)
@@ -379,9 +432,9 @@ def app():
                 except Exception as e:
                     st.error("Error inesperado al crear cita. Revisa los logs.")
                     st.write(e)
-                dfc = list_citas(limit=int(limit_c), offset=int(
-                    offset_c), filtro=filtro_c)
-                st.dataframe(dfc)
+                # dfc = list_citas(limit=int(limit_c), offset=int(
+                    # offset_c), filtro=filtro_c)
+                # st.dataframe(dfc)
 
         # 4) Edición y eliminación
         if not dfc.empty:
@@ -451,9 +504,9 @@ def app():
                             st.error(
                                 "Error inesperado al actualizar cita. Revisa los logs.")
                             st.write(e)
-                        dfc = list_citas(limit=int(limit_c), offset=int(
-                            offset_c), filtro=filtro_c)
-                        st.dataframe(dfc)
+                        # dfc = list_citas(limit=int(limit_c), offset=int(
+                            # offset_c), filtro=filtro_c)
+                        # st.dataframe(dfc)
 
                 # — Eliminación lógica —
                 with c2:
@@ -465,9 +518,105 @@ def app():
                             st.error(
                                 "Error al eliminar cita. Revisa los logs.")
                             st.write(e)
-                        dfc = list_citas(limit=int(limit_c), offset=int(
-                            offset_c), filtro=filtro_c)
-                        st.dataframe(dfc)
+                        # dfc = list_citas(limit=int(limit_c), offset=int(
+                            # offset_c), filtro=filtro_c)
+                        # st.dataframe(dfc)
+
+    elif opcion == 'Facturación':
+        st.header("💳 Gestión de Facturas")
+
+        # filtros / paginación
+        filtro_f = st.text_input("🔎 Buscar método de pago", key="filter_facturas")
+        limit_f = st.number_input("Filas a mostrar", 1, 100, 5, key="limit_facturas")
+        offset_f = st.number_input("Offset", 0, step=1, key="offset_facturas")
+
+        try:
+            dff = list_facturas(limit=int(limit_f), offset=int(offset_f), filtro=filtro_f)
+        except Exception as e:
+            st.error("Error al cargar facturas")
+            st.write(e)
+            return
+
+        st.dataframe(dff)
+
+        with st.expander("➕ Nueva factura"):
+            cita = st.number_input("ID de cita", min_value=1, key="new_cita")
+            monto = st.number_input("Monto", min_value=0.0, format="%.2f", key="new_monto")
+            metodo = st.text_input("Método de pago", key="new_metodo")
+            if st.button("Crear", key="btn_create_factura"):
+                try:
+                    create_factura(cita, monto, metodo)
+                    st.success("Factura creada")
+                except Exception as e:
+                    st.error("No se pudo crear")
+                    st.write(e)
+                dff = list_facturas(limit=int(limit_f),
+                                offset=int(offset_f), filtro=filtro_f)
+                st.dataframe(dff)
+
+        if not dff.empty:
+            sel = st.selectbox("Selecciona factura",
+                           dff["FACTURA_ID"], key="sel_factura")
+        if st.button("Eliminar", key="btn_delete_factura"):
+            try:
+                cnt = delete_factura(sel)
+                st.success(f"Facturas eliminadas: {cnt}")
+            except Exception as e:
+                st.error("Error al eliminar")
+                st.write(e)
+            dff = list_facturas(limit=int(limit_f),
+                                offset=int(offset_f), filtro=filtro_f)
+            st.dataframe(dff)
+
+    # === REPORTES ===
+    elif opcion == 'Reportes':
+        st.header("📊 Reportes")
+
+        tipo = st.selectbox("Seleccione reporte", [
+            "Atendidos Hoy",
+            "Ingresos por Servicio (Mes)",
+            "Vacunas Pendientes"
+        ], key="rep_tipo")
+
+        if tipo == "Atendidos Hoy":
+            df = reporte_atendidos_hoy()
+
+            # — Debug: muestro qué columnas llegó a traer —
+            # st.write("👉 Columnas originales:", df.columns.tolist())
+
+            # 2) Normalizo columnas a minúsculas
+            df.columns = df.columns.str.lower()  # -> ahora tengo 'veterinario' y 'atendidos'
+
+            # — Debug: confirmo renombrado —
+            # st.write("👉 Columnas renombradas:", df.columns.tolist())
+
+            st.table(df)
+            st.bar_chart(df.set_index("veterinario")["atendidos"])
+
+        elif tipo == "Ingresos por Servicio (Mes)":
+            col1, col2 = st.columns(2)
+            with col1:
+                year = st.number_input("Año",  value=datetime.now(
+                ).year, min_value=2000, max_value=2100, key="rep_year")
+                month = st.number_input("Mes",  value=datetime.now(
+                ).month, min_value=1, max_value=12, key="rep_month")
+            if st.button("Generar"):
+                df = reporte_ingresos_servicio_mes(year, month)
+                df.columns = df.columns.str.lower()
+                st.table(df)
+                st.line_chart(df.set_index("servicio")["total"])
+
+        else:  # Vacunas Pendientes
+            df = reporte_vacunas_pendientes()
+            df.columns = df.columns.str.lower()
+            st.table(df)
+            csv = df.to_csv(index=False).encode()
+            st.download_button(
+                "⬇️ Descargar CSV",
+                data=csv,
+                file_name="vacunas_pendientes.csv",
+                mime="text/csv"
+            )
 
 
 if __name__ == '__main__':

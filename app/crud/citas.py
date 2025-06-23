@@ -41,26 +41,35 @@ def list_citas(limit: int = 5,
                offset: int = 0,
                filtro: str = None) -> pd.DataFrame:
     """
-    Devuelve las citas registradas, con paginación y filtro opcional por servicio o motivo.
-
-    :param limit: número máximo de registros
-    :param offset: desplazamiento inicial
-    :param filtro: texto de búsqueda en servicio o motivo (case-insensitive)
-    :return: DataFrame con columnas cita_id, mascota_id, vet_id, fecha_hora, servicio, motivo
+    Devuelve las citas registradas, con paginación, filtro opcional
+    y columnas mascota_id, mascota_nombre, vet_id, veterinario_nombre, fecha_hora, servicio, motivo.
     """
     sql_parts = [
-        "SELECT cita_id, mascota_id, vet_id, fecha_hora, servicio, motivo",
-        "FROM vet_cita"
+        "SELECT",
+        "  c.cita_id,",
+        "  c.mascota_id,",
+        "  m.nombre AS mascota_nombre,",
+        "  c.vet_id,",
+        "  v.nombre AS veterinario_nombre,",
+        "  c.fecha_hora,",
+        "  c.servicio,",
+        "  c.motivo",
+        "FROM vet_cita c",
+        "JOIN vet_mascota      m ON c.mascota_id = m.mascota_id",
+        "JOIN vet_veterinario  v ON c.vet_id     = v.vet_id",
+        "WHERE 1 = 1"
     ]
     params = []
     if filtro:
-        sql_parts.append("WHERE LOWER(servicio) LIKE %s OR LOWER(motivo) LIKE %s")
+        sql_parts.append("  AND (LOWER(c.servicio) LIKE %s OR LOWER(c.motivo) LIKE %s)")
         term = f"%{filtro.lower()}%"
         params.extend([term, term])
-    sql_parts.append("ORDER BY fecha_hora DESC")
+
+    sql_parts.append("ORDER BY c.fecha_hora DESC")
     sql_parts.append("LIMIT %s OFFSET %s")
     params.extend([limit, offset])
-    query = " ".join(sql_parts)
+
+    query = "\n".join(sql_parts)
     return run_query(query, tuple(params))
 
 
